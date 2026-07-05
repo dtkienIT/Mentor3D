@@ -319,6 +319,46 @@ body.is-ready #loader {
   border-color: rgba(248, 113, 113, 0.3);
 }
 
+/* Replay button */
+#btn-replay {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(16px);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+
+#btn-replay:hover {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: var(--accent);
+  box-shadow: 0 4px 24px var(--accent-glow);
+}
+
+#btn-replay:active {
+  transform: translateX(-50%) scale(0.94);
+}
+
+#btn-replay svg {
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
 /* Responsive */
 @media (max-width: 480px) {
   #chat-panel {

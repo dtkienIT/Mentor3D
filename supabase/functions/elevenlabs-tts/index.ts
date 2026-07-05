@@ -25,7 +25,7 @@ Deno.serve(async (req: Request) => {
     const selectedVoice = voice_id || DEFAULT_VOICE_ID;
 
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoice}`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoice}/stream`,
       {
         method: "POST",
         headers: {
@@ -42,6 +42,7 @@ Deno.serve(async (req: Request) => {
             style: 0.0,
             use_speaker_boost: true,
           },
+          optimize_streaming_latency: 4,
         }),
       }
     );
@@ -54,13 +55,11 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const audioBuffer = await response.arrayBuffer();
-
-    return new Response(new Uint8Array(audioBuffer), {
+    return new Response(response.body, {
       headers: {
         ...corsHeaders,
         "Content-Type": "audio/mpeg",
-        "Content-Length": audioBuffer.byteLength.toString(),
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (err) {

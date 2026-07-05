@@ -4,38 +4,29 @@ let currentUtterance = null;
 
 export function initKokoro() {}
 
-function pickFemaleVoice() {
+function pickVietnameseFemaleVoice() {
   const voices = speechSynthesis.getVoices();
   if (!voices.length) return null;
 
-  const lang = (navigator.language || 'en').toLowerCase();
-  const isVi = lang.startsWith('vi');
+  // prefer vi-VN voices
+  const viVoices = voices.filter((v) => v.lang.startsWith('vi'));
 
-  const femaleKeywords = ['female', 'woman', 'girl', 'zira', 'hazel', 'susan', 'google uk english female',
-    'google us english', 'samantha', 'victoria', 'karen', 'moira', 'fiona',
-    'amelie', 'anna', 'sara', 'nora', 'laura', 'paulina', 'monica', 'zosia',
-    'ioana', 'yuna', 'kyoko', 'luciana', 'joana', 'marisol', 'sin-ji', 'mei-jia',
-    'tessa', 'veena', 'milena', 'alva', 'lekha', 'mariska', 'yelena'];
+  const femaleKeywords = ['female', 'woman', 'girl', 'thu', 'lan', 'mai', 'hoa', 'linh', 'ha', 'huong'];
 
-  // prefer matching locale
-  const localeVoices = voices.filter((v) =>
-    isVi ? v.lang.startsWith('vi') : v.lang.toLowerCase().startsWith(lang.slice(0, 2))
-  );
+  const pool = viVoices.length ? viVoices : voices;
 
-  const pool = localeVoices.length ? localeVoices : voices;
-
-  // score voices: female name + not "male" in name
   const scored = pool.map((v) => {
     const name = v.name.toLowerCase();
     let score = 0;
     if (femaleKeywords.some((k) => name.includes(k))) score += 10;
     if (name.includes('male') && !name.includes('female')) score -= 20;
+    if (v.lang === 'vi-VN') score += 5;
     if (v.localService) score += 2;
     return { v, score };
   });
 
   scored.sort((a, b) => b.score - a.score);
-  return scored[0]?.v ?? voices[0];
+  return scored[0]?.v ?? pool[0] ?? voices[0];
 }
 
 export function speak(text, vrm, onStart, onEnd) {
@@ -50,9 +41,14 @@ export function speak(text, vrm, onStart, onEnd) {
   currentUtterance = utterance;
 
   const assignVoice = () => {
-    const voice = pickFemaleVoice();
-    if (voice) utterance.voice = voice;
-    utterance.rate = 1.0;
+    const voice = pickVietnameseFemaleVoice();
+    if (voice) {
+      utterance.voice = voice;
+      utterance.lang = voice.lang || 'vi-VN';
+    } else {
+      utterance.lang = 'vi-VN';
+    }
+    utterance.rate = 0.95;
     utterance.pitch = 1.1;
     utterance.volume = 1.0;
 

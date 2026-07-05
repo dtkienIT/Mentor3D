@@ -177,9 +177,16 @@ export function initChat(sceneCtx) {
       );
     } catch (err) {
       console.error('Gemini error:', err);
-      const fallback = isVietnamese()
-        ? 'Xin l\u1ed7i, m\u00ecnh g\u1eb7p s\u1ef1 c\u1ed1. B\u1ea1n th\u1eed l\u1ea1i nh\u00e9?'
-        : 'Sorry, I had trouble processing that. Could you try again?';
+      let fallback;
+      if (err.message === 'NO_API_KEY') {
+        fallback = isVietnamese()
+          ? 'Chua co API key. Vui long them VITE_GEMINI_API_KEY vao file .env (lay tai aistudio.google.com/apikey).'
+          : 'No API key configured. Please add VITE_GEMINI_API_KEY to your .env file (get one at aistudio.google.com/apikey).';
+      } else {
+        fallback = isVietnamese()
+          ? 'Xin l\u1ed7i, m\u00ecnh g\u1eb7p s\u1ef1 c\u1ed1. B\u1ea1n th\u1eed l\u1ea1i nh\u00e9?'
+          : 'Sorry, I had trouble processing that. Could you try again?';
+      }
       appendMessage('assistant', fallback);
       setStatus('');
     }

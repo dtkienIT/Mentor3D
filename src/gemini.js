@@ -23,8 +23,8 @@ let model = null;
 
 function getModel() {
   if (model) return model;
-  if (!API_KEY) {
-    throw new Error('VITE_GEMINI_API_KEY is not configured in .env');
+  if (!API_KEY || API_KEY.trim() === '') {
+    throw new Error('NO_API_KEY');
   }
   const genAI = new GoogleGenerativeAI(API_KEY);
   model = genAI.getGenerativeModel({

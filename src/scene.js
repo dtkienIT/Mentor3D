@@ -209,14 +209,20 @@ export async function initScene() {
   const blinkCtrl    = new BlinkController();
   const greetingAnim = new GreetingAnimator(vrm);
 
-  // Start greeting after a short pause when ready
-  setTimeout(() => greetingAnim.play(), 400);
+  // Auto-start: begin greeting immediately once the scene is ready
+  setTimeout(() => {
+    console.log('[Mika] Starting greeting animation');
+    greetingAnim.play();
+  }, 300);
 
   // Replay button
   const btnReplay = document.getElementById('btn-replay');
   if (btnReplay) {
     btnReplay.addEventListener('click', () => {
-      if (!greetingAnim.isPlaying) greetingAnim.play();
+      if (!greetingAnim.isPlaying) {
+        console.log('[Mika] Replaying greeting animation');
+        greetingAnim.play();
+      }
     });
   }
 
@@ -229,9 +235,32 @@ export async function initScene() {
     const t = clock.elapsedTime;
 
     smoothMouse.lerp(mouseNDC, 1 - Math.pow(0.04, delta));
+
+    // Step 1 – animation clip writes initial bone poses
     mixer.update(delta);
 
-    // LookAt with organic drift (reduced while greeting plays)
+    // Step 2 – ALL bone / expression overrides must happen BEFORE vrm.update()
+    //          because vrm.update() copies normalized-bone rotations → raw mesh skeleton.
+
+    // Greeting state machine (overrides arm/spine bones each frame while playing)
+    greetingAnim.update(delta);
+
+    // Procedural organic motion (only when greeting is not running, to avoid fighting)
+    if (!greetingAnim.isPlaying) {
+      if (spineBone) {
+        spineBone.rotation.z = snoise(t, 0.19, 13.4) * 0.018;
+        spineBone.rotation.x = snoise(t, 0.12, 55.2) * 0.010;
+      }
+      if (chestBone) {
+        chestBone.rotation.z = snoise(t, 0.21, 29.7) * 0.015;
+      }
+      if (headBone) {
+        // read current value so we add micro-tilt on top of whatever the clip set
+        headBone.rotation.z = headBone.rotation.z + snoise(t, 0.13, 67.8) * 0.018;
+      }
+    }
+
+    // LookAt target (read by vrm.update's lookAt resolver)
     const driftScale = greetingAnim.isPlaying ? 0.3 : 1.0;
     const driftX = snoise(t, 0.18, 7.3)  * 4  * driftScale;
     const driftY = snoise(t, 0.14, 22.1) * 2.5 * driftScale;
@@ -242,40 +271,21 @@ export async function initScene() {
       -Math.cos(yawR) * 5,
     );
 
-    vrm.update(delta);
-
-    // ── Procedural natural motion (suppressed during greeting for spine/chest) ──
-    const breathe = snoise(t, 0.55, 0) * 0.007;
-    root.position.y = breathe;
-    root.rotation.z = snoise(t, 0.22, 44.6) * 0.012;
-    root.rotation.x = snoise(t, 0.17, 88.2) * 0.006;
-
-    if (!greetingAnim.isPlaying) {
-      if (spineBone) {
-        spineBone.rotation.z = snoise(t, 0.19, 13.4) * 0.018;
-        spineBone.rotation.x = snoise(t, 0.12, 55.2) * 0.010;
-      }
-      if (chestBone) {
-        chestBone.rotation.z = snoise(t, 0.21, 29.7) * 0.015;
-      }
-      if (headBone) {
-        headBone.rotation.z += snoise(t, 0.13, 67.8) * 0.018;
-      }
-    }
-
-    // ── Greeting animation override ──────────────────────────
-    greetingAnim.update(delta);
-
-    // ── Blinking ─────────────────────────────────────────────
+    // Expressions (vrm.update calls expressionManager.update internally)
     blinkCtrl.update(delta, vrm);
-
-    // ── Expression variation ──────────────────────────────────
     const mgr = vrm.expressionManager;
     if (mgr) {
       const happyPulse = 0.38 + snoise(t, 0.25, 111.5) * 0.06;
       try { mgr.setValue('happy', Math.max(0, Math.min(1, happyPulse))); } catch {}
-      mgr.update?.();
     }
+
+    // Step 3 – VRM processes all inputs: bone poses, lookAt, expressions → raw mesh
+    vrm.update(delta);
+
+    // Step 4 – root-level transforms (Object3D, not bones; always safe after vrm.update)
+    root.position.y = snoise(t, 0.55, 0) * 0.007;
+    root.rotation.z = snoise(t, 0.22, 44.6) * 0.012;
+    root.rotation.x = snoise(t, 0.17, 88.2) * 0.006;
 
     controls.update();
     renderer.render(scene, camera);
@@ -324,10 +334,9 @@ export function applyExpression(vrm, emotion, intensity = 0.7) {
   if (!mgr) return;
   const emotions = ['happy', 'sad', 'angry', 'surprised', 'neutral', 'relaxed'];
   emotions.forEach((name) => { try { mgr.setValue(name, 0); } catch {} });
-  if (emotion === 'neutral') { mgr.update?.(); return; }
+  if (emotion === 'neutral') return;
   const mapped = { happy: 'happy', sad: 'sad', angry: 'angry', surprised: 'surprised' }[emotion] ?? 'happy';
   try { mgr.setValue(mapped, intensity); } catch {}
-  mgr.update?.();
 }
 
 function tuneMaterials(vrm) {

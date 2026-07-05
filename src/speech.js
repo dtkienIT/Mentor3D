@@ -1,11 +1,42 @@
 let isMuted = false;
 let lipSyncInterval = null;
-let currentAudio = null;
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+let currentUtterance = null;
 
 export function initKokoro() {}
+
+function pickFemaleVoice() {
+  const voices = speechSynthesis.getVoices();
+  if (!voices.length) return null;
+
+  const lang = (navigator.language || 'en').toLowerCase();
+  const isVi = lang.startsWith('vi');
+
+  const femaleKeywords = ['female', 'woman', 'girl', 'zira', 'hazel', 'susan', 'google uk english female',
+    'google us english', 'samantha', 'victoria', 'karen', 'moira', 'fiona',
+    'amelie', 'anna', 'sara', 'nora', 'laura', 'paulina', 'monica', 'zosia',
+    'ioana', 'yuna', 'kyoko', 'luciana', 'joana', 'marisol', 'sin-ji', 'mei-jia',
+    'tessa', 'veena', 'milena', 'alva', 'lekha', 'mariska', 'yelena'];
+
+  // prefer matching locale
+  const localeVoices = voices.filter((v) =>
+    isVi ? v.lang.startsWith('vi') : v.lang.toLowerCase().startsWith(lang.slice(0, 2))
+  );
+
+  const pool = localeVoices.length ? localeVoices : voices;
+
+  // score voices: female name + not "male" in name
+  const scored = pool.map((v) => {
+    const name = v.name.toLowerCase();
+    let score = 0;
+    if (femaleKeywords.some((k) => name.includes(k))) score += 10;
+    if (name.includes('male') && !name.includes('female')) score -= 20;
+    if (v.localService) score += 2;
+    return { v, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.v ?? voices[0];
+}
 
 export function speak(text, vrm, onStart, onEnd) {
   if (isMuted) {
@@ -15,103 +46,41 @@ export function speak(text, vrm, onStart, onEnd) {
 
   stopSpeaking(vrm);
 
-  const audio = new Audio();
-  currentAudio = audio;
+  const utterance = new SpeechSynthesisUtterance(text);
+  currentUtterance = utterance;
 
-  const mediaSource = new MediaSource();
-  audio.src = URL.createObjectURL(mediaSource);
+  const assignVoice = () => {
+    const voice = pickFemaleVoice();
+    if (voice) utterance.voice = voice;
+    utterance.rate = 1.0;
+    utterance.pitch = 1.1;
+    utterance.volume = 1.0;
 
-  let sourceBuffer = null;
-  let queue = [];
-  let streamDone = false;
+    utterance.onstart = () => {
+      onStart?.();
+      startLipSync(vrm);
+    };
 
-  mediaSource.addEventListener('sourceopen', () => {
-    sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
-
-    sourceBuffer.addEventListener('updateend', () => {
-      if (queue.length > 0 && !sourceBuffer.updating) {
-        sourceBuffer.appendBuffer(queue.shift());
-      } else if (streamDone && queue.length === 0 && !sourceBuffer.updating) {
-        if (mediaSource.readyState === 'open') {
-          mediaSource.endOfStream();
-        }
-      }
-    });
-
-    fetchStream();
-  });
-
-  audio.addEventListener('canplay', () => {
-    audio.play().catch(() => {});
-    onStart?.();
-    startLipSync(vrm);
-  }, { once: true });
-
-  audio.addEventListener('ended', () => {
-    clearLipSync(vrm);
-    cleanup();
-    onEnd?.();
-  });
-
-  audio.addEventListener('error', () => {
-    clearLipSync(vrm);
-    cleanup();
-    onEnd?.();
-  });
-
-  function cleanup() {
-    if (currentAudio === audio) currentAudio = null;
-    URL.revokeObjectURL(audio.src);
-  }
-
-  function appendChunk(chunk) {
-    if (!sourceBuffer) return;
-    if (sourceBuffer.updating || queue.length > 0) {
-      queue.push(chunk);
-    } else {
-      sourceBuffer.appendBuffer(chunk);
-    }
-  }
-
-  async function fetchStream() {
-    try {
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/elevenlabs-tts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({ text }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`TTS failed: ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        appendChunk(value);
-      }
-
-      streamDone = true;
-      if (sourceBuffer && !sourceBuffer.updating && queue.length === 0) {
-        if (mediaSource.readyState === 'open') {
-          mediaSource.endOfStream();
-        }
-      }
-    } catch (err) {
-      console.warn('ElevenLabs TTS error:', err);
-      streamDone = true;
-      if (mediaSource.readyState === 'open') {
-        try { mediaSource.endOfStream(); } catch {}
-      }
+    utterance.onend = () => {
       clearLipSync(vrm);
-      cleanup();
+      currentUtterance = null;
       onEnd?.();
-    }
+    };
+
+    utterance.onerror = () => {
+      clearLipSync(vrm);
+      currentUtterance = null;
+      onEnd?.();
+    };
+
+    speechSynthesis.speak(utterance);
+  };
+
+  // voices may not be loaded yet on first call
+  if (speechSynthesis.getVoices().length > 0) {
+    assignVoice();
+  } else {
+    speechSynthesis.addEventListener('voiceschanged', assignVoice, { once: true });
   }
 }
 
@@ -129,10 +98,8 @@ function startLipSync(vrm) {
     mouthShapes.forEach((s) => {
       try { mgr.setValue(s, 0); } catch {}
     });
-
     try { mgr.setValue(shape, openness); } catch {}
     mgr.update?.();
-
     frame++;
   }, 100);
 }
@@ -142,10 +109,8 @@ function clearLipSync(vrm) {
     clearInterval(lipSyncInterval);
     lipSyncInterval = null;
   }
-
   const mgr = vrm.expressionManager;
   if (!mgr) return;
-
   ['aa', 'ih', 'ou', 'ee', 'oh'].forEach((s) => {
     try { mgr.setValue(s, 0); } catch {}
   });
@@ -153,20 +118,16 @@ function clearLipSync(vrm) {
 }
 
 export function stopSpeaking(vrm) {
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.src = '';
-    currentAudio = null;
-  }
+  speechSynthesis.cancel();
+  currentUtterance = null;
   clearLipSync(vrm);
 }
 
 export function toggleMute() {
   isMuted = !isMuted;
-  if (isMuted && currentAudio) {
-    currentAudio.pause();
-    currentAudio.src = '';
-    currentAudio = null;
+  if (isMuted) {
+    speechSynthesis.cancel();
+    currentUtterance = null;
   }
   return isMuted;
 }

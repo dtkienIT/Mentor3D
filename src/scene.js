@@ -9,9 +9,8 @@ import {
 } from '@pixiv/three-vrm-animation';
 import { GreetingAnimator } from './animator.js';
 
-const CDN_BASE = 'https://raw.githubusercontent.com/dtkienIT/Mentor3D/2d144bffba9d4e66a2a2045abc3531d97eaca96c';
-const MODEL_URL = `${CDN_BASE}/vrm-models/8590256991748008892.vrm`;
-const IDLE_ANIMATION_URL = `${CDN_BASE}/animations/Relax.vrma`;
+const MODEL_URL        = '/vrm-models/8590256991748008892.vrm';
+const IDLE_ANIMATION_URL = '/animations/Relax.vrma';
 const TARGET_HEIGHT = 2.03;
 const CAMERA_TARGET = new THREE.Vector3(0, 1.04, 0);
 
@@ -79,6 +78,10 @@ export async function initScene() {
   manager.onProgress = (_url, loaded, total) => {
     const ratio = total > 0 ? Math.round((loaded / total) * 100) : 36;
     setProgress(Math.max(12, Math.min(96, ratio)));
+  };
+  manager.onError = (url) => {
+    console.error('[Mika] Failed to load asset:', url);
+    setNote(`Error loading: ${url.split('/').pop()}`);
   };
 
   const renderer = new THREE.WebGLRenderer({

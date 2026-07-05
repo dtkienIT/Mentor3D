@@ -103,12 +103,20 @@ export class GreetingAnimator {
   constructor(vrm) {
     this._vrm = vrm;
     this._state = S.DONE;
-    this._ms = 0;           // elapsed ms in current state
+    this._ms = 0;
     this._playing = false;
-    this._from = {};        // captured rotation at state start
+    this._from = {};
 
     const h = vrm.humanoid;
-    const g = (name) => h?.getNormalizedBoneNode?.(name) ?? null;
+    // Try normalized bone API (VRM 1.0 + three-vrm v3), fall back to raw
+    const g = (name) => {
+      const n = h?.getNormalizedBoneNode?.(name);
+      if (n) return n;
+      const r = h?.getRawBoneNode?.(name);
+      if (r) return r;
+      return null;
+    };
+
     this._b = {
       rShoulder: g('rightUpperArm'),
       rElbow:    g('rightLowerArm'),
@@ -119,6 +127,11 @@ export class GreetingAnimator {
       spine:     g('spine'),
       chest:     g('upperChest') ?? g('chest'),
     };
+
+    const found = Object.entries(this._b).filter(([, v]) => v !== null).map(([k]) => k);
+    const missing = Object.entries(this._b).filter(([, v]) => v === null).map(([k]) => k);
+    console.log('[Mika] GreetingAnimator bones found:', found.join(', ') || 'none');
+    if (missing.length) console.warn('[Mika] Missing bones:', missing.join(', '));
   }
 
   get isPlaying() { return this._playing; }

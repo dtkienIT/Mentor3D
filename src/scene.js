@@ -72,17 +72,8 @@ export async function initScene() {
   const setProgress = (p) => { if (loaderProgress) loaderProgress.style.width = `${p}%`; };
   const setNote = (t) => { if (loaderNote) loaderNote.textContent = t; };
 
-  THREE.Cache.enabled = true;
-
-  const manager = new THREE.LoadingManager();
-  manager.onProgress = (_url, loaded, total) => {
-    const ratio = total > 0 ? Math.round((loaded / total) * 100) : 36;
-    setProgress(Math.max(12, Math.min(96, ratio)));
-  };
-  manager.onError = (url) => {
-    console.error('[Mika] Failed to load asset:', url);
-    setNote(`Error loading: ${url.split('/').pop()}`);
-  };
+  // Do NOT enable THREE.Cache — it can create blob URLs that fail in sandboxed iframes.
+  THREE.Cache.enabled = false;
 
   const renderer = new THREE.WebGLRenderer({
     alpha: true, antialias: true, canvas, powerPreference: 'high-performance',
@@ -145,19 +136,21 @@ export async function initScene() {
   floor.receiveShadow = true;
   scene.add(floor);
 
-  const vrmLoader = new GLTFLoader(manager);
+  const vrmLoader = new GLTFLoader();
   vrmLoader.setCrossOrigin('anonymous');
   vrmLoader.register((parser) => new VRMLoaderPlugin(parser));
 
-  const animLoader = new GLTFLoader(manager);
+  const animLoader = new GLTFLoader();
   animLoader.setCrossOrigin('anonymous');
   animLoader.register((parser) => new VRMAnimationLoaderPlugin(parser));
 
   setNote('Loading VRM model...');
-  const gltf = await vrmLoader.loadAsync(MODEL_URL);
+  setProgress(20);
+  const gltf = await fetchAndParse(vrmLoader, MODEL_URL);
   const vrm = gltf.userData.vrm;
   if (!vrm) throw new Error('VRM not found in model file');
 
+  setProgress(70);
   vrm.scene.rotation.y = Math.PI;
   tuneMaterials(vrm);
 
@@ -176,6 +169,7 @@ export async function initScene() {
   scene.add(root);
 
   setNote('Loading animations...');
+  setProgress(85);
   const mixer = new THREE.AnimationMixer(vrm.scene);
   const idleClip = await loadAnimClip(animLoader, IDLE_ANIMATION_URL, vrm);
   let idleAction = null;
@@ -315,9 +309,20 @@ export async function initScene() {
   return { vrm };
 }
 
+// Fetch binary, parse with loader directly — avoids Three.js URL management and
+// blob:// sub-resource URLs that break in sandboxed iframes (e.g. Bolt preview).
+async function fetchAndParse(loader, url) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} loading ${url}`);
+  const buffer = await resp.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    loader.parse(buffer, '', resolve, reject);
+  });
+}
+
 async function loadAnimClip(loader, url, vrm) {
   try {
-    const gltf = await loader.loadAsync(url);
+    const gltf = await fetchAndParse(loader, url);
     const vrmAnim = gltf.userData.vrmAnimations?.[0];
     if (!vrmAnim) return null;
     if (vrm.lookAt && !vrm.scene.children.some((c) => c instanceof VRMLookAtQuaternionProxy)) {
@@ -327,7 +332,7 @@ async function loadAnimClip(loader, url, vrm) {
     }
     return createVRMAnimationClip(vrmAnim, vrm);
   } catch (e) {
-    console.warn('Failed to load animation:', url, e);
+    console.warn('[Mika] Failed to load animation:', url, e);
     return null;
   }
 }

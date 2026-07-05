@@ -5,6 +5,9 @@ let kokoroLoading = false;
 let kokoroReady = false;
 let audioContext = null;
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
 const VIETNAMESE_REGEX = /[\u00C0-\u00C3\u00C8-\u00CA\u00CC-\u00CD\u00D2-\u00D5\u00D9-\u00DA\u00DD\u00E0-\u00E3\u00E8-\u00EA\u00EC-\u00ED\u00F2-\u00F5\u00F9-\u00FA\u00FD\u0102-\u0103\u0110-\u0111\u0128-\u0129\u0168-\u0169\u01A0-\u01B0\u1EA0-\u1EF9]/;
 
 function isVietnameseText(text) {
@@ -41,23 +44,46 @@ export function initKokoro() {
   });
 }
 
-function selectVietnameseVoice() {
-  const voices = window.speechSynthesis.getVoices();
-  if (!voices.length) return null;
+async function speakWithEdgeTTS(text, vrm, onStart, onEnd) {
+  try {
+    const voice = isVietnameseText(text)
+      ? 'vi-VN-HoaiMyNeural'
+      : 'en-US-AvaMultilingualNeural';
 
-  const viVoice = voices.find((v) =>
-    v.lang.startsWith('vi') ||
-    v.name.includes('Linh') ||
-    v.name.includes('An')
-  );
-  if (viVoice) return viVoice;
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ text, voice }),
+    });
 
-  return voices.find((v) =>
-    v.name.includes('Female') ||
-    v.name.includes('Samantha') ||
-    v.name.includes('Google') && v.name.includes('Female') ||
-    v.name.includes('Zira')
-  ) || null;
+    if (!response.ok) {
+      throw new Error(`Edge TTS failed: ${response.status}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const ctx = getAudioContext();
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(ctx.destination);
+
+    source.onended = () => {
+      clearLipSync(vrm);
+      onEnd?.();
+    };
+
+    onStart?.();
+    startLipSync(vrm);
+    source.start();
+    window._currentAudioSource = source;
+  } catch (err) {
+    console.warn('Edge TTS failed, falling back to Web Speech:', err);
+    speakWithWebSpeech(text, vrm, onStart, onEnd);
+  }
 }
 
 async function speakWithKokoro(text, vrm, onStart, onEnd) {
@@ -83,8 +109,8 @@ async function speakWithKokoro(text, vrm, onStart, onEnd) {
     source.start();
     window._currentAudioSource = source;
   } catch (err) {
-    console.warn('Kokoro playback failed, falling back to Web Speech:', err);
-    speakWithWebSpeech(text, vrm, onStart, onEnd);
+    console.warn('Kokoro playback failed, falling back to Edge TTS:', err);
+    speakWithEdgeTTS(text, vrm, onStart, onEnd);
   }
 }
 
@@ -94,7 +120,14 @@ function speakWithWebSpeech(text, vrm, onStart, onEnd) {
   utterance.pitch = 1.1;
   utterance.volume = 0.9;
 
-  const voice = selectVietnameseVoice();
+  const voices = window.speechSynthesis.getVoices();
+  const voice = voices.find((v) =>
+    v.name.includes('Female') ||
+    v.name.includes('Samantha') ||
+    v.name.includes('Google') && v.name.includes('Female') ||
+    v.name.includes('Zira')
+  ) || null;
+
   if (voice) {
     utterance.voice = voice;
     utterance.lang = voice.lang;
@@ -133,10 +166,12 @@ export function speak(text, vrm, onStart, onEnd) {
 
   const isVi = isVietnameseText(text);
 
-  if (!isVi && kokoroReady) {
+  if (isVi) {
+    speakWithEdgeTTS(text, vrm, onStart, onEnd);
+  } else if (kokoroReady) {
     speakWithKokoro(text, vrm, onStart, onEnd);
   } else {
-    speakWithWebSpeech(text, vrm, onStart, onEnd);
+    speakWithEdgeTTS(text, vrm, onStart, onEnd);
   }
 }
 

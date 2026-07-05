@@ -8,7 +8,7 @@ import {
   createVRMAnimationClip,
 } from '@pixiv/three-vrm-animation';
 
-const CDN_BASE = 'https://cdn.jsdelivr.net/gh/dtkienIT/Mentor3D@2d144bf/public';
+const CDN_BASE = 'https://cdn.jsdelivr.net/gh/dtkienIT/Mentor3D@main';
 const MODEL_URL = `${CDN_BASE}/vrm-models/8590256991748008892.vrm`;
 const IDLE_ANIMATION_URL = `${CDN_BASE}/animations/Relax.vrma`;
 const TARGET_HEIGHT = 2.03;

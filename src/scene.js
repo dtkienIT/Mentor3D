@@ -95,11 +95,13 @@ export async function initScene() {
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // Loaders
+  // Loaders - set crossOrigin for CDN resources
   const vrmLoader = new GLTFLoader(manager);
+  vrmLoader.setCrossOrigin('anonymous');
   vrmLoader.register((parser) => new VRMLoaderPlugin(parser));
 
   const animLoader = new GLTFLoader(manager);
+  animLoader.setCrossOrigin('anonymous');
   animLoader.register((parser) => new VRMAnimationLoaderPlugin(parser));
 
   setNote('Loading VRM model...');
@@ -137,7 +139,7 @@ export async function initScene() {
   }
 
   // Set default expression
-  setExpression(vrm, 'happy', 0.4);
+  applyExpression(vrm, 'happy', 0.4);
 
   setProgress(100);
   setTimeout(() => document.body.classList.add('is-ready'), 150);
@@ -199,7 +201,7 @@ export async function initScene() {
   resize();
   animate();
 
-  return { vrm, mixer, setExpression };
+  return { vrm };
 }
 
 async function loadAnimClip(loader, url, vrm) {
@@ -221,15 +223,13 @@ async function loadAnimClip(loader, url, vrm) {
   }
 }
 
-export function setExpression(vrm, emotion, intensity = 0.7) {
+export function applyExpression(vrm, emotion, intensity = 0.7) {
   const mgr = vrm.expressionManager;
   if (!mgr) return;
 
   const emotions = ['happy', 'sad', 'angry', 'surprised', 'neutral', 'relaxed'];
   emotions.forEach((name) => {
-    try {
-      mgr.setValue(name, 0);
-    } catch {}
+    try { mgr.setValue(name, 0); } catch {}
   });
 
   if (emotion === 'neutral') {
@@ -242,9 +242,7 @@ export function setExpression(vrm, emotion, intensity = 0.7) {
                  emotion === 'angry' ? 'angry' :
                  emotion === 'surprised' ? 'surprised' : 'happy';
 
-  try {
-    mgr.setValue(mapped, intensity);
-  } catch {}
+  try { mgr.setValue(mapped, intensity); } catch {}
   mgr.update?.();
 }
 

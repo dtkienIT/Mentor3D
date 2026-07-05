@@ -1,7 +1,7 @@
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { sendToGemini } from './gemini.js';
-import { speak, toggleMute, getIsMuted, stopSpeaking } from './speech.js';
-import { setExpression } from './scene.js';
+import { speak, toggleMute, stopSpeaking } from './speech.js';
+import { applyExpression } from './scene.js';
 
 const STORAGE_KEY = 'mika_local_messages';
 
@@ -111,32 +111,39 @@ export function initChat(sceneCtx) {
       return;
     }
 
-    const { data: convos } = await supabase
-      .from('conversations')
-      .select('id')
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    if (convos && convos.length > 0) {
-      conversationId = convos[0].id;
-      const { data: msgs } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('conversation_id', conversationId)
-        .order('created_at', { ascending: true });
-
-      if (msgs) {
-        messages = msgs;
-        msgs.forEach((m) => appendMessage(m.sender, m.content));
-      }
-    } else {
-      const { data } = await supabase
+    try {
+      const { data: convos } = await supabase
         .from('conversations')
-        .insert({})
         .select('id')
-        .maybeSingle();
+        .order('created_at', { ascending: false })
+        .limit(1);
 
-      if (data) conversationId = data.id;
+      if (convos && convos.length > 0) {
+        conversationId = convos[0].id;
+        const { data: msgs } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('conversation_id', conversationId)
+          .order('created_at', { ascending: true });
+
+        if (msgs && msgs.length > 0) {
+          messages = msgs;
+          msgs.forEach((m) => appendMessage(m.sender, m.content));
+        }
+      } else {
+        const { data } = await supabase
+          .from('conversations')
+          .insert({})
+          .select('id')
+          .maybeSingle();
+
+        if (data) conversationId = data.id;
+      }
+    } catch (err) {
+      console.warn('Supabase unavailable, using localStorage:', err);
+      conversationId = 'local-convo';
+      messages = loadLocalMessages();
+      messages.forEach((m) => appendMessage(m.sender, m.content));
     }
 
     if (messages.length === 0) {
@@ -159,7 +166,7 @@ export function initChat(sceneCtx) {
       const response = await sendToGemini(text, messages);
       const { reply, emotion } = response;
 
-      setExpression(vrm, emotion, 0.7);
+      applyExpression(vrm, emotion, 0.7);
       appendMessage('assistant', reply);
       await saveMessage('assistant', reply, emotion);
 
@@ -184,18 +191,21 @@ export function initChat(sceneCtx) {
     const msg = { sender, content, emotion, created_at: new Date().toISOString() };
     messages.push(msg);
 
-    if (!isSupabaseConfigured) {
+    if (!isSupabaseConfigured || conversationId === 'local-convo') {
       saveLocalMessages(messages);
       return;
     }
 
-    if (conversationId && conversationId !== 'local-convo') {
+    try {
       await supabase.from('messages').insert({
         conversation_id: conversationId,
         sender,
         content,
         emotion,
       });
+    } catch (err) {
+      console.warn('Failed to save message to Supabase:', err);
+      saveLocalMessages(messages);
     }
   }
 

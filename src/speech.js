@@ -1,5 +1,4 @@
 let isMuted = false;
-let currentUtterance = null;
 let lipSyncInterval = null;
 
 const VIETNAMESE_REGEX = /[\u00C0-\u00C3\u00C8-\u00CA\u00CC-\u00CD\u00D2-\u00D5\u00D9-\u00DA\u00DD\u00E0-\u00E3\u00E8-\u00EA\u00EC-\u00ED\u00F2-\u00F5\u00F9-\u00FA\u00FD\u0102-\u0103\u0110-\u0111\u0128-\u0129\u0168-\u0169\u01A0-\u01B0\u1EA0-\u1EF9]/;
@@ -64,7 +63,6 @@ export function speak(text, vrm, onStart, onEnd) {
     onEnd?.();
   };
 
-  currentUtterance = utterance;
   window.speechSynthesis.speak(utterance);
 }
 
@@ -113,9 +111,5 @@ export function stopSpeaking(vrm) {
 export function toggleMute() {
   isMuted = !isMuted;
   if (isMuted) window.speechSynthesis.cancel();
-  return isMuted;
-}
-
-export function getIsMuted() {
   return isMuted;
 }

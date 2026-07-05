@@ -28,7 +28,7 @@ html, body {
 body {
   background:
     linear-gradient(rgba(15, 23, 42, 0.15), rgba(15, 23, 42, 0.25)),
-    url('https://cdn.jsdelivr.net/gh/dtkienIT/Mentor3D@main/backgrounds/study-room-sunlit.png') center / cover no-repeat;
+    url('https://raw.githubusercontent.com/dtkienIT/Mentor3D/2d144bffba9d4e66a2a2045abc3531d97eaca96c/backgrounds/study-room-sunlit.png') center / cover no-repeat;
   color: var(--text-primary);
 }
 

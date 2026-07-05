@@ -1,11 +1,38 @@
-import { supabase } from './supabase.js';
+import { supabase, isSupabaseConfigured } from './supabase.js';
 import { sendToGemini } from './gemini.js';
 import { speak, toggleMute, getIsMuted, stopSpeaking } from './speech.js';
 import { setExpression } from './scene.js';
 
+const STORAGE_KEY = 'mika_local_messages';
+
 let conversationId = null;
 let messages = [];
 let isProcessing = false;
+
+function isVietnamese() {
+  return (window.navigator.language || '').startsWith('vi');
+}
+
+function getWelcomeMessage() {
+  return isVietnamese()
+    ? 'Xin ch\u00e0o! M\u00ecnh l\u00e0 Mika, tr\u1ee3 l\u00fd h\u1ecdc t\u1eadp 3D. H\u00f4m nay m\u00ecnh c\u00f3 th\u1ec3 gi\u00fap g\u00ec cho b\u1ea1n?'
+    : 'Hi there! I\'m Mika. How can I help you today?';
+}
+
+function loadLocalMessages() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalMessages(msgs) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(msgs));
+  } catch {}
+}
 
 export function initChat(sceneCtx) {
   const { vrm } = sceneCtx;
@@ -31,9 +58,7 @@ export function initChat(sceneCtx) {
 
   btnMute.addEventListener('click', () => {
     const muted = toggleMute();
-    if (muted) {
-      stopSpeaking(vrm);
-    }
+    if (muted) stopSpeaking(vrm);
     iconUnmuted.style.display = muted ? 'none' : 'block';
     iconMuted.style.display = muted ? 'block' : 'none';
     btnMute.classList.toggle('muted', muted);
@@ -46,7 +71,7 @@ export function initChat(sceneCtx) {
     recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.lang = 'en-US';
+    recognition.lang = window.navigator.language.startsWith('vi') ? 'vi-VN' : 'en-US';
 
     recognition.onresult = (event) => {
       const transcript = event.results[0][0].transcript;
@@ -76,6 +101,16 @@ export function initChat(sceneCtx) {
   });
 
   async function loadOrCreateConversation() {
+    if (!isSupabaseConfigured) {
+      conversationId = 'local-convo';
+      messages = loadLocalMessages();
+      messages.forEach((m) => appendMessage(m.sender, m.content));
+      if (messages.length === 0) {
+        appendMessage('assistant', getWelcomeMessage());
+      }
+      return;
+    }
+
     const { data: convos } = await supabase
       .from('conversations')
       .select('id')
@@ -105,7 +140,7 @@ export function initChat(sceneCtx) {
     }
 
     if (messages.length === 0) {
-      appendMessage('assistant', 'Hi there! I\'m Mika. How can I help you today?');
+      appendMessage('assistant', getWelcomeMessage());
     }
   }
 
@@ -135,7 +170,9 @@ export function initChat(sceneCtx) {
       );
     } catch (err) {
       console.error('Gemini error:', err);
-      const fallback = 'Sorry, I had trouble processing that. Could you try again?';
+      const fallback = isVietnamese()
+        ? 'Xin l\u1ed7i, m\u00ecnh g\u1eb7p s\u1ef1 c\u1ed1. B\u1ea1n th\u1eed l\u1ea1i nh\u00e9?'
+        : 'Sorry, I had trouble processing that. Could you try again?';
       appendMessage('assistant', fallback);
       setStatus('');
     }
@@ -144,10 +181,22 @@ export function initChat(sceneCtx) {
   }
 
   async function saveMessage(sender, content, emotion) {
-    if (!conversationId) return;
-    const msg = { conversation_id: conversationId, sender, content, emotion };
-    messages.push({ ...msg, created_at: new Date().toISOString() });
-    await supabase.from('messages').insert(msg);
+    const msg = { sender, content, emotion, created_at: new Date().toISOString() };
+    messages.push(msg);
+
+    if (!isSupabaseConfigured) {
+      saveLocalMessages(messages);
+      return;
+    }
+
+    if (conversationId && conversationId !== 'local-convo') {
+      await supabase.from('messages').insert({
+        conversation_id: conversationId,
+        sender,
+        content,
+        emotion,
+      });
+    }
   }
 
   function appendMessage(sender, content) {

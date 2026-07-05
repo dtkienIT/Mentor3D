@@ -14,6 +14,62 @@ const IDLE_ANIMATION_URL = `${CDN_BASE}/animations/Relax.vrma`;
 const TARGET_HEIGHT = 2.03;
 const CAMERA_TARGET = new THREE.Vector3(0, 1.04, 0);
 
+// Layered sine noise for organic-looking movement
+function snoise(t, freq, seed = 0) {
+  return (
+    Math.sin(t * freq + seed) * 0.5 +
+    Math.sin(t * freq * 2.13 + seed * 1.7) * 0.25 +
+    Math.sin(t * freq * 4.37 + seed * 3.1) * 0.125
+  );
+}
+
+// --- Blink controller ---
+class BlinkController {
+  constructor() {
+    this._phase = 'idle'; // idle | closing | opening
+    this._timer = this._nextInterval();
+    this._value = 0;
+    this._speed = 9; // eyes close/open in ~1/9 s each phase
+  }
+
+  _nextInterval() {
+    return 2.2 + Math.random() * 3.5;
+  }
+
+  update(dt, vrm) {
+    const mgr = vrm.expressionManager;
+    if (!mgr) return;
+
+    if (this._phase === 'idle') {
+      this._timer -= dt;
+      if (this._timer <= 0) this._phase = 'closing';
+      return;
+    }
+
+    if (this._phase === 'closing') {
+      this._value = Math.min(1, this._value + dt * this._speed);
+      _setExpr(mgr, 'blink', this._value);
+      if (this._value >= 1) this._phase = 'opening';
+      return;
+    }
+
+    if (this._phase === 'opening') {
+      this._value = Math.max(0, this._value - dt * this._speed);
+      _setExpr(mgr, 'blink', this._value);
+      if (this._value <= 0) {
+        this._phase = 'idle';
+        this._timer = this._nextInterval();
+      }
+    }
+  }
+}
+
+function _setExpr(mgr, name, val) {
+  try { mgr.setValue(name, val); } catch {}
+  try { mgr.setValue('blinkLeft', val); } catch {}
+  try { mgr.setValue('blinkRight', val); } catch {}
+}
+
 export async function initScene() {
   const canvas = document.getElementById('stage');
   const loaderProgress = document.getElementById('loader-progress');
@@ -95,7 +151,6 @@ export async function initScene() {
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // Loaders - set crossOrigin for CDN resources
   const vrmLoader = new GLTFLoader(manager);
   vrmLoader.setCrossOrigin('anonymous');
   vrmLoader.register((parser) => new VRMLoaderPlugin(parser));
@@ -112,7 +167,6 @@ export async function initScene() {
   vrm.scene.rotation.y = Math.PI;
   tuneMaterials(vrm);
 
-  // Mount
   const root = new THREE.Group();
   root.name = 'Mika';
   vrm.scene.updateMatrixWorld(true);
@@ -127,7 +181,6 @@ export async function initScene() {
   root.add(vrm.scene);
   scene.add(root);
 
-  // Idle animation
   setNote('Loading animations...');
   const mixer = new THREE.AnimationMixer(vrm.scene);
   const idleClip = await loadAnimClip(animLoader, IDLE_ANIMATION_URL, vrm);
@@ -138,7 +191,6 @@ export async function initScene() {
     action.play();
   }
 
-  // Set default expression
   applyExpression(vrm, 'happy', 0.4);
 
   setProgress(100);
@@ -158,26 +210,84 @@ export async function initScene() {
     mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
   });
 
-  // Animation loop
+  // Get spine/chest/neck bones for procedural motion
+  const spineBone = vrm.humanoid?.getNormalizedBoneNode?.('spine');
+  const chestBone = vrm.humanoid?.getNormalizedBoneNode?.('chest');
+  const headBone  = vrm.humanoid?.getNormalizedBoneNode?.('head');
+  const neckBone  = vrm.humanoid?.getNormalizedBoneNode?.('neck');
+
+  // Store base rotations after idle animation binds
+  const boneBase = {};
+  if (spineBone) boneBase.spine = spineBone.rotation.clone();
+  if (chestBone) boneBase.chest = chestBone.rotation.clone();
+  if (headBone)  boneBase.head  = headBone.rotation.clone();
+  if (neckBone)  boneBase.neck  = neckBone.rotation.clone();
+
+  const blinkCtrl = new BlinkController();
+
+  // Smooth mouse position with lerp target
+  const smoothMouse = new THREE.Vector2(0, 0);
+
   const clock = new THREE.Clock();
+
   function animate() {
     requestAnimationFrame(animate);
     const delta = Math.min(clock.getDelta(), 1 / 30);
+    const t = clock.elapsedTime;
+
+    // Smooth mouse
+    smoothMouse.lerp(mouseNDC, 1 - Math.pow(0.04, delta));
+
     mixer.update(delta);
 
-    // Update lookAt target position based on mouse
-    const yaw = mouseNDC.x * 25;
-    const pitch = mouseNDC.y * 15;
+    // --- Procedural lookAt: mouse + organic drift ---
+    const driftX = snoise(t, 0.18, 7.3)  * 4;   // degrees of extra wander
+    const driftY = snoise(t, 0.14, 22.1) * 2.5;
+    const yawDeg   = smoothMouse.x * 25 + driftX;
+    const pitchDeg = smoothMouse.y * 15 + driftY;
+    const yawR = yawDeg * (Math.PI / 180);
     lookAtTarget.position.set(
-      Math.sin(yaw * Math.PI / 180) * 5,
-      1.3 + pitch * 0.5,
-      -Math.cos(yaw * Math.PI / 180) * 5,
+      Math.sin(yawR) * 5,
+      1.3 + pitchDeg * 0.035,
+      -Math.cos(yawR) * 5,
     );
 
     vrm.update(delta);
 
-    // Subtle bobbing
-    root.position.y = Math.sin(clock.elapsedTime * 1.35) * 0.005;
+    // --- Breathing: root Y bob ---
+    const breathe = snoise(t, 0.55, 0) * 0.007;
+    root.position.y = breathe;
+
+    // --- Body sway: very subtle Z-axis tilt ---
+    const swayZ = snoise(t, 0.22, 44.6) * 0.012;
+    const swayX = snoise(t, 0.17, 88.2) * 0.006;
+    root.rotation.z = swayZ;
+    root.rotation.x = swayX;
+
+    // --- Procedural spine/chest lean ---
+    if (spineBone) {
+      spineBone.rotation.z = snoise(t, 0.19, 13.4) * 0.018;
+      spineBone.rotation.x = snoise(t, 0.12, 55.2) * 0.010;
+    }
+    if (chestBone) {
+      chestBone.rotation.z = snoise(t, 0.21, 29.7) * 0.015;
+    }
+
+    // --- Head micro-tilt (on top of lookAt) ---
+    if (headBone) {
+      headBone.rotation.z += snoise(t, 0.13, 67.8) * 0.018;
+    }
+
+    // --- Blinking ---
+    blinkCtrl.update(delta, vrm);
+
+    // --- Expression breathing: subtle happy variation ---
+    const mgr = vrm.expressionManager;
+    if (mgr) {
+      const happyPulse = 0.38 + snoise(t, 0.25, 111.5) * 0.06;
+      try { mgr.setValue('happy', Math.max(0, Math.min(1, happyPulse))); } catch {}
+      mgr.update?.();
+    }
 
     controls.update();
     renderer.render(scene, camera);
@@ -237,9 +347,9 @@ export function applyExpression(vrm, emotion, intensity = 0.7) {
     return;
   }
 
-  const mapped = emotion === 'happy' ? 'happy' :
-                 emotion === 'sad' ? 'sad' :
-                 emotion === 'angry' ? 'angry' :
+  const mapped = emotion === 'happy'     ? 'happy'     :
+                 emotion === 'sad'       ? 'sad'       :
+                 emotion === 'angry'     ? 'angry'     :
                  emotion === 'surprised' ? 'surprised' : 'happy';
 
   try { mgr.setValue(mapped, intensity); } catch {}

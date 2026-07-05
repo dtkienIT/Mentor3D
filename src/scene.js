@@ -9,7 +9,9 @@ import {
 } from '@pixiv/three-vrm-animation';
 import { GreetingAnimator } from './animator.js';
 
-const MODEL_URL        = '/vrm-models/8590256991748008892.vrm';
+const CDN_BASE           = 'https://raw.githubusercontent.com/dtkienIT/Mentor3D/2d144bffba9d4e66a2a2045abc3531d97eaca96c';
+const LOCAL_MODEL_URL    = '/vrm-models/8590256991748008892.vrm';
+const CDN_MODEL_URL      = `${CDN_BASE}/vrm-models/8590256991748008892.vrm`;
 const IDLE_ANIMATION_URL = '/animations/Relax.vrma';
 const TARGET_HEIGHT = 2.03;
 const CAMERA_TARGET = new THREE.Vector3(0, 1.04, 0);
@@ -146,7 +148,7 @@ export async function initScene() {
 
   setNote('Loading VRM model...');
   setProgress(20);
-  const gltf = await fetchAndParse(vrmLoader, MODEL_URL);
+  const gltf = await fetchAndParse(vrmLoader, LOCAL_MODEL_URL, CDN_MODEL_URL);
   const vrm = gltf.userData.vrm;
   if (!vrm) throw new Error('VRM not found in model file');
 
@@ -309,15 +311,31 @@ export async function initScene() {
   return { vrm };
 }
 
-// Fetch binary, parse with loader directly — avoids Three.js URL management and
-// blob:// sub-resource URLs that break in sandboxed iframes (e.g. Bolt preview).
-async function fetchAndParse(loader, url) {
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status} loading ${url}`);
-  const buffer = await resp.arrayBuffer();
+// Fetch binary → parse in-memory to avoid Three.js URL/blob issues in sandboxed iframes.
+// If the local file is a truncated stub (Bolt caps large binary uploads at 512 KB),
+// the GLB declared-length check catches it and the CDN copy is fetched as fallback.
+async function fetchAndParse(loader, primaryUrl, fallbackUrl) {
+  const buf = await fetchBuffer(primaryUrl, fallbackUrl);
   return new Promise((resolve, reject) => {
-    loader.parse(buffer, '', resolve, reject);
+    loader.parse(buf, '', resolve, reject);
   });
+}
+
+async function fetchBuffer(primaryUrl, fallbackUrl) {
+  const resp = await fetch(primaryUrl);
+  if (resp.ok) {
+    const buf = await resp.arrayBuffer();
+    // GLB integrity: declared length (bytes 8-11 LE) must fit inside the buffer.
+    if (buf.byteLength >= 12) {
+      const declaredLen = new DataView(buf).getUint32(8, true);
+      if (buf.byteLength >= declaredLen) return buf;           // complete ✓
+      console.warn(`[Mika] Local file truncated (${buf.byteLength}/${declaredLen} B)${fallbackUrl ? ', trying CDN...' : ''}`);
+    }
+  }
+  if (!fallbackUrl) throw new Error(`Failed to fetch ${primaryUrl}`);
+  const cdn = await fetch(fallbackUrl);
+  if (!cdn.ok) throw new Error(`HTTP ${cdn.status} fetching ${fallbackUrl}`);
+  return cdn.arrayBuffer();
 }
 
 async function loadAnimClip(loader, url, vrm) {

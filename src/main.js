@@ -1,10 +1,12 @@
 import './styles.css';
 import { initScene } from './scene.js';
 import { initChat } from './chat.js';
+import { initKokoro } from './speech.js';
 
 async function boot() {
   const sceneCtx = await initScene();
   initChat(sceneCtx);
+  initKokoro();
 }
 
 boot().catch((err) => {

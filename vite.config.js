@@ -6,4 +6,7 @@ export default defineConfig({
     allowedHosts: true,
   },
   assetsInclude: ['**/*.vrm', '**/*.vrma'],
+  optimizeDeps: {
+    exclude: ['onnxruntime-web'],
+  },
 });

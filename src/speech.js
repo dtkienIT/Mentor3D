@@ -39,34 +39,14 @@ export function initKokoro() {
     kokoroLoading = false;
     console.log('Kokoro TTS ready');
   }).catch((err) => {
-    console.warn('Kokoro TTS failed to load, using Web Speech fallback:', err);
+    console.warn('Kokoro TTS failed to load:', err);
     kokoroLoading = false;
   });
 }
 
-async function speakWithEdgeTTS(text, vrm, onStart, onEnd) {
-  try {
-    const voice = isVietnameseText(text)
-      ? 'vi-VN-HoaiMyNeural'
-      : 'en-US-AvaMultilingualNeural';
-
-    const response = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-      },
-      body: JSON.stringify({ text, voice }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Edge TTS failed: ${response.status}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const ctx = getAudioContext();
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-
+function playAudioBuffer(arrayBuffer, vrm, onStart, onEnd) {
+  const ctx = getAudioContext();
+  ctx.decodeAudioData(arrayBuffer).then((audioBuffer) => {
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
@@ -80,57 +60,92 @@ async function speakWithEdgeTTS(text, vrm, onStart, onEnd) {
     startLipSync(vrm);
     source.start();
     window._currentAudioSource = source;
-  } catch (err) {
-    console.warn('Edge TTS failed, falling back to Web Speech:', err);
-    speakWithWebSpeech(text, vrm, onStart, onEnd);
+  }).catch((err) => {
+    console.warn('Audio decode failed:', err);
+    clearLipSync(vrm);
+    onEnd?.();
+  });
+}
+
+async function speakWithEdgeTTS(text, vrm, onStart, onEnd) {
+  const voice = isVietnameseText(text)
+    ? 'vi-VN-HoaiMyNeural'
+    : 'en-US-AvaMultilingualNeural';
+
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ text, voice }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Edge TTS: ${response.status}`);
   }
+
+  const arrayBuffer = await response.arrayBuffer();
+  if (arrayBuffer.byteLength < 100) {
+    throw new Error('Edge TTS returned empty audio');
+  }
+
+  playAudioBuffer(arrayBuffer, vrm, onStart, onEnd);
 }
 
 async function speakWithKokoro(text, vrm, onStart, onEnd) {
-  try {
-    const audio = await kokoroTTS.generate(text, { voice: 'af_heart' });
-    const ctx = getAudioContext();
-    const floatData = audio.audio;
-    const sampleRate = audio.sampling_rate || 24000;
-    const audioBuffer = ctx.createBuffer(1, floatData.length, sampleRate);
-    audioBuffer.getChannelData(0).set(floatData);
+  const audio = await kokoroTTS.generate(text, { voice: 'af_heart' });
+  const ctx = getAudioContext();
+  const floatData = audio.audio;
+  const sampleRate = audio.sampling_rate || 24000;
+  const audioBuffer = ctx.createBuffer(1, floatData.length, sampleRate);
+  audioBuffer.getChannelData(0).set(floatData);
 
-    const source = ctx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(ctx.destination);
+  const source = ctx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(ctx.destination);
 
-    source.onended = () => {
-      clearLipSync(vrm);
-      onEnd?.();
-    };
+  source.onended = () => {
+    clearLipSync(vrm);
+    onEnd?.();
+  };
 
-    onStart?.();
-    startLipSync(vrm);
-    source.start();
-    window._currentAudioSource = source;
-  } catch (err) {
-    console.warn('Kokoro playback failed, falling back to Edge TTS:', err);
-    speakWithEdgeTTS(text, vrm, onStart, onEnd);
-  }
+  onStart?.();
+  startLipSync(vrm);
+  source.start();
+  window._currentAudioSource = source;
 }
 
 function speakWithWebSpeech(text, vrm, onStart, onEnd) {
+  if (!window.speechSynthesis) {
+    onEnd?.();
+    return;
+  }
+
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = 1.0;
   utterance.pitch = 1.1;
   utterance.volume = 0.9;
 
   const voices = window.speechSynthesis.getVoices();
-  const voice = voices.find((v) =>
-    v.name.includes('Female') ||
-    v.name.includes('Samantha') ||
-    v.name.includes('Google') && v.name.includes('Female') ||
-    v.name.includes('Zira')
-  ) || null;
 
-  if (voice) {
-    utterance.voice = voice;
-    utterance.lang = voice.lang;
+  if (isVietnameseText(text)) {
+    const viVoice = voices.find((v) => v.lang.startsWith('vi'));
+    if (viVoice) {
+      utterance.voice = viVoice;
+      utterance.lang = viVoice.lang;
+    }
+  } else {
+    const femaleVoice = voices.find((v) =>
+      v.name.includes('Female') ||
+      v.name.includes('Samantha') ||
+      (v.name.includes('Google') && v.name.includes('Female')) ||
+      v.name.includes('Zira')
+    );
+    if (femaleVoice) {
+      utterance.voice = femaleVoice;
+      utterance.lang = femaleVoice.lang;
+    }
   }
 
   utterance.onstart = () => {
@@ -152,12 +167,12 @@ function speakWithWebSpeech(text, vrm, onStart, onEnd) {
 }
 
 export function speak(text, vrm, onStart, onEnd) {
-  if (isMuted || (!window.speechSynthesis && !kokoroReady)) {
+  if (isMuted) {
     onEnd?.();
     return;
   }
 
-  window.speechSynthesis.cancel();
+  window.speechSynthesis?.cancel();
   if (window._currentAudioSource) {
     try { window._currentAudioSource.stop(); } catch {}
     window._currentAudioSource = null;
@@ -167,11 +182,19 @@ export function speak(text, vrm, onStart, onEnd) {
   const isVi = isVietnameseText(text);
 
   if (isVi) {
-    speakWithEdgeTTS(text, vrm, onStart, onEnd);
+    speakWithEdgeTTS(text, vrm, onStart, onEnd).catch(() => {
+      speakWithWebSpeech(text, vrm, onStart, onEnd);
+    });
   } else if (kokoroReady) {
-    speakWithKokoro(text, vrm, onStart, onEnd);
+    speakWithKokoro(text, vrm, onStart, onEnd).catch(() => {
+      speakWithEdgeTTS(text, vrm, onStart, onEnd).catch(() => {
+        speakWithWebSpeech(text, vrm, onStart, onEnd);
+      });
+    });
   } else {
-    speakWithEdgeTTS(text, vrm, onStart, onEnd);
+    speakWithEdgeTTS(text, vrm, onStart, onEnd).catch(() => {
+      speakWithWebSpeech(text, vrm, onStart, onEnd);
+    });
   }
 }
 
@@ -213,7 +236,7 @@ function clearLipSync(vrm) {
 }
 
 export function stopSpeaking(vrm) {
-  window.speechSynthesis.cancel();
+  window.speechSynthesis?.cancel();
   if (window._currentAudioSource) {
     try { window._currentAudioSource.stop(); } catch {}
     window._currentAudioSource = null;
@@ -224,7 +247,7 @@ export function stopSpeaking(vrm) {
 export function toggleMute() {
   isMuted = !isMuted;
   if (isMuted) {
-    window.speechSynthesis.cancel();
+    window.speechSynthesis?.cancel();
     if (window._currentAudioSource) {
       try { window._currentAudioSource.stop(); } catch {}
       window._currentAudioSource = null;
